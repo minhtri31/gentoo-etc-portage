@@ -1,1 +1,1 @@
-Chỉ là một bản coppy lại từ exGENT
+Chỉ coppy lại từ bản livecd exGENT
