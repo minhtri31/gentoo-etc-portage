@@ -1,0 +1,77 @@
+#!/bin/bash
+
+TMPLOG="/tmp/emerge_useflags.log"
+SKIP_FLAGS="test doc examples"
+
+echo ">>> Lấy USE flags từ @system hoặc @world..."
+echo "!!! CẢNH BÁO: Biên dịch lại toàn bộ gói có thể mất nhiều giờ tùy cấu hình !!!"
+echo ""
+read -p "Bạn muốn lấy USE flags từ @system hay @world? [system/world] (default: system): " TARGET_SET
+TARGET_SET=${TARGET_SET:-system}
+
+echo ">>> Bạn chọn: @$TARGET_SET"
+read -p "Bạn có chắc chắn muốn tiếp tục chạy 'emerge -eav @$TARGET_SET'? (y/N): " confirm_emerge
+if [[ "$confirm_emerge" != "y" && "$confirm_emerge" != "Y" ]]; then
+    echo ">>> Hủy bỏ bởi người dùng. Script kết thúc."
+    exit 0
+fi
+
+emerge -eav "@$TARGET_SET" 2>&1 | tee "$TMPLOG"
+
+echo ">>> Kiểm tra 'flaggie'..."
+if ! command -v flaggie >/dev/null 2>&1; then
+  echo "!!! 'flaggie' chưa được cài. Cài bằng: emerge -av app-portage/flaggie"
+  exit 1
+fi
+echo ">>> OK. 'flaggie' đã sẵn sàng."
+
+echo ">>> Đang xử lý log và áp dụng USE flags..."
+
+awk -v SKIP_FLAGS="$SKIP_FLAGS" '
+    /^\s*ebuild[^]]*\s+([^\s]+)\s+USE="([^"]+)"/ {
+        full_atom = $2
+        use_flags_string = $0
+        sub(/::.*/, "", full_atom)
+        gsub(/^.*USE="/, "", use_flags_string)
+        gsub(/".*$/, "", use_flags_string)
+
+        package_name = full_atom
+        sub(/:.*/, "", package_name)
+        if (package_name ~ /-[0-9]+(\.[0-9a-zA-Z_]+)*(-r[0-9]+)?$/) {
+            sub(/-[0-9]+(\.[0-9a-zA-Z_]+)*(-r[0-9]+)?$/, "", package_name)
+        }
+
+        if (package_name !~ /^[a-z0-9._+-]+\/[a-z0-9._+-]+$/) next
+
+        flaggie_use_string = ""
+        n = split(use_flags_string, flags_array, " ")
+        for (i = 1; i <= n; i++) {
+            current_flag = flags_array[i]
+            if (length(current_flag) == 0) continue
+            flag_base = current_flag
+            gsub(/^[-+]/, "", flag_base)
+            if (index(" " SKIP_FLAGS " ", " " flag_base " ") > 0) continue
+
+            if (current_flag ~ /^[-+]/) {
+                flaggie_use_string = flaggie_use_string " " current_flag
+            } else {
+                flaggie_use_string = flaggie_use_string " +" current_flag
+            }
+        }
+
+        sub(/^[ \t]+/, "", flaggie_use_string)
+        if (length(package_name) > 0 && length(flaggie_use_string) > 0) {
+            printf "\n--- Package: %s (Từ atom: %s)\n", package_name, full_atom
+            printf "    Áp dụng USE flags: [%s]\n", flaggie_use_string
+            cmd = "flaggie \"" package_name "\" " flaggie_use_string
+            print "    Chạy: " cmd
+            system(cmd)
+        }
+    }
+' "$TMPLOG"
+
+echo ""
+echo ">>> Áp dụng USE flags hoàn tất."
+echo ">>> Gợi ý tiếp theo:"
+echo "    emerge --changed-use -av"
+echo "    hoặc emerge -uDNav @world"
